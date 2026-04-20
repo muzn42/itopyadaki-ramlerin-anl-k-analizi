@@ -130,8 +130,16 @@ def clean_data(df):
             cl_match = re.search(r'CL\s*(\d+)', name_upper)
             cl_degeri = int(cl_match.group(1)) if cl_match else (16 if bellek_turu == "DDR4" else 36)
             
-            kit_match = re.search(r'(2X|DUAL|KIT)', name_upper)
-            kit_tipi = "Çift Modül (Dual/Kit)" if kit_match else "Tek Modül (Single)"
+            # "Kit" kelimesi İtopya'da "Single Kit" olarak da geçtiği için onu kaldırıyoruz.
+            dual_match = re.search(r'(2X|DUAL|2\s*X)', name_upper)
+            single_match = re.search(r'(1X|SINGLE|1\s*X)', name_upper)
+            
+            if single_match:
+                kit_tipi = "Tek Modül (Single)"
+            elif dual_match:
+                kit_tipi = "Çift Modül (Dual/Kit)"
+            else:
+                kit_tipi = "Tek Modül (Single)"
                 
             return pd.Series([marka, kapasite_gb, frekans_mhz, bellek_turu, cl_degeri, kit_tipi])
             
@@ -151,7 +159,7 @@ def clean_data(df):
 # ==========================================
 # 3. Dinamik Puanlama Motoru
 # ==========================================
-def apply_dynamic_scoring(df, w_cap, w_freq, w_lat, dual_bonus):
+def apply_dynamic_scoring(df, w_cap, w_freq, w_lat):
     dff = df.copy()
     if dff.empty: return dff
     
@@ -163,7 +171,8 @@ def apply_dynamic_scoring(df, w_cap, w_freq, w_lat, dual_bonus):
     base_score = (dff['Kapasite (GB)'] ** w_cap_exp) * (dff['Frekans (MHz)'] ** w_freq_exp) * ((10 / dff['Gerçek Gecikme (ns)']) ** w_lat_exp)
     
     dff['Performans Skoru'] = base_score
-    dff.loc[dff['Kit Tipi'] == "Çift Modül (Dual/Kit)", 'Performans Skoru'] *= (1 + dual_bonus)
+    dff.loc[(dff['Kit Tipi'] == "Çift Modül (Dual/Kit)") & (dff['Bellek Türü'] == "DDR4"), 'Performans Skoru'] *= 1.10
+    dff.loc[(dff['Kit Tipi'] == "Çift Modül (Dual/Kit)") & (dff['Bellek Türü'] == "DDR5"), 'Performans Skoru'] *= 1.02
     
     perf_max = dff['Performans Skoru'].max()
     dff['Performans Skoru'] = ((dff['Performans Skoru'] / perf_max) * 100).round(2) if perf_max > 0 else 0
@@ -323,7 +332,7 @@ def main():
             
         st.divider()
         st.header("📋 Tüm RAM Veritabanı")
-        st.dataframe(df, use_container_width=True)
+        st.dataframe(df.drop(columns=["Ürün Görseli", "Ürün Linki"], errors="ignore"), use_container_width=True)
 
     elif st.session_state.step == 1:
         st.subheader("Soru 1: Anakartınız hangi bellek türünü destekliyor?")
@@ -423,9 +432,6 @@ def main():
             w_freq = st.slider("Frekans (MHz) Ağırlığı", 0, 100, 30)
             w_lat = st.slider("Gecikme (ns) Ağırlığı", 0, 100, 20)
             
-            st.info("💡 Çift Modül (Dual Channel) RAM'lere performansı artırdığı için otomatik olarak **%15 Bonus** eklenir.")
-            dual_bonus = 0.15
-            
             st.divider()
             st.title("🛠️ Filtre Paneli")
             
@@ -466,7 +472,7 @@ def main():
                 st.rerun()
 
         # Skoru tüm verisetine uygula
-        df_scored = apply_dynamic_scoring(df, w_cap, w_freq, w_lat, dual_bonus)
+        df_scored = apply_dynamic_scoring(df, w_cap, w_freq, w_lat)
 
         filtered_df = df_scored[
             (df_scored["Marka"].isin(sel_brands)) & 
